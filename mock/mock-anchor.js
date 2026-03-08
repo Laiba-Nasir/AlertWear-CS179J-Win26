@@ -11,12 +11,12 @@ const workers = [
     { tagId: 4, fullName: 'Alex Chen', empId: 'EMP-004' }
 ];
 
-// Simulated anchor positions (corners of a 10m x 10m area)
+// Simulated anchor positions (must match anchors.json IDs and coordinates)
 const anchors = [
-    { anchorId: 'A1', x: 0, y: 0 },
-    { anchorId: 'A2', x: 10, y: 0 },
-    { anchorId: 'A3', x: 10, y: 10 },
-    { anchorId: 'A4', x: 0, y: 10 }
+    { anchorId: '0', x: 0, y: 0 },
+    { anchorId: '1', x: 7.5, y: 0 },
+    { anchorId: '2', x: 7.5, y: 7.5 },
+    { anchorId: '3', x: 0, y: 7.5 }
 ];
 
 // Simulate tag positions (will move randomly)
@@ -80,7 +80,7 @@ client.on('connect', () => {
                     timestamp: new Date().toISOString()
                 };
 
-                const topic = `uwb/${anchor.anchorId}/data`;
+                const topic = `uwb/anchor/${anchor.anchorId}/data`;
                 client.publish(topic, JSON.stringify(payload));
             });
         });

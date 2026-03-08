@@ -79,7 +79,7 @@
         </form>
 
         <p class="hint">
-            Demo credentials: admin / admin123
+            Demo credentials: admin / Vertex@2026!
         </p>
     </div>
 </div>

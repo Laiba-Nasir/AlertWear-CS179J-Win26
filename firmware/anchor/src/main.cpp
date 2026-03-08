@@ -1,7 +1,8 @@
 /*
- * VERTEX UWB - Anchor 0 with WiFi + MQTT
+ * VERTEX UWB - Anchor with WiFi + MQTT + Piggyback Sensor + Panic
  * 
- * Publishes UWB distance data to MQTT broker for dashboard display
+ * Publishes UWB distance data, gas sensor data, and panic status
+ * (all received via AT+RDATA) to MQTT broker
  * 
  * Hardware: MakerFabs ESP32-S3 UWB Pro (DW3000 + STM32 AT)
  */
@@ -13,22 +14,12 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <Arduino.h>
+#include "../../config.h"
 
-// ============== USER CONFIG - EDIT THESE! ==============
-// WiFi Settings
-const char* WIFI_SSID = "SpectrumLN";
-const char* WIFI_PASSWORD = "Riverside@22";
-
-// MQTT Settings (your VERTEX server)
-const char* MQTT_SERVER = "192.168.1.4";
-const int MQTT_PORT = 1883;
-const char* MQTT_USER = "";
-const char* MQTT_PASSWORD = "";
-
-// Anchor Configuration - CHANGE THIS SECTION WHEN PROGRMMING ANCHORS C
-#define ANCHOR_ID 3
-#define ANCHOR_X 0.0
-#define ANCHOR_Y 3.0
+// Anchor Configuration - CHANGE THIS SECTION WHEN PROGRAMMING ANCHORS
+#define ANCHOR_ID 0
+#define ANCHOR_X 0
+#define ANCHOR_Y 0
 
 // UWB Settings
 #define UWB_TAG_COUNT 64
@@ -57,6 +48,20 @@ String response = "";
 bool wifiConnected = false;
 bool mqttConnected = false;
 unsigned long lastReconnectAttempt = 0;
+
+// Cached sensor data from tag (received via AT+RDATA)
+struct SensorData {
+    float temperature;
+    float humidity;
+    float pressure;
+    float gas;
+    bool panic;
+    bool valid;
+    unsigned long lastUpdate;
+};
+
+// Support up to 8 tags with sensor data
+SensorData tagSensors[8];
 
 void logoshow() {
     display.clearDisplay();
@@ -106,11 +111,17 @@ void updateDisplay(String status, String data = "") {
         }
     }
     
-    display.setCursor(0, 56);
-    if (wifiConnected) {
-        display.print(WiFi.localIP());
-    } else {
-        display.print("Connecting...");
+    // Show sensor data and panic status
+    display.setCursor(0, 48);
+    if (tagSensors[0].valid) {
+        if (tagSensors[0].panic) {
+            display.println("!! TAG 0 PANIC !!");
+        } else {
+            display.print("Gas T:");
+            display.print(tagSensors[0].temperature, 1);
+            display.print(" G:");
+            display.print(tagSensors[0].gas, 0);
+        }
     }
     
     display.display();
@@ -195,6 +206,16 @@ void publishDistance(int tagId, float distance, int rssi) {
     doc["anchorY"] = ANCHOR_Y;
     doc["timestamp"] = millis();
     
+    // Include sensor data if we have recent data for this tag (within 15 seconds)
+    if (tagId < 8 && tagSensors[tagId].valid && 
+        (millis() - tagSensors[tagId].lastUpdate) < 15000) {
+        doc["temperature"] = tagSensors[tagId].temperature;
+        doc["humidity"] = tagSensors[tagId].humidity;
+        doc["pressure"] = tagSensors[tagId].pressure;
+        doc["gas"] = tagSensors[tagId].gas;
+        doc["panic"] = tagSensors[tagId].panic;
+    }
+    
     String payload;
     serializeJson(doc, payload);
     
@@ -209,36 +230,123 @@ void publishDistance(int tagId, float distance, int rssi) {
     }
 }
 
-void parseAndPublish(String data) {
-    // Format: AT+RANGE=tid:0,mask:0F,seq:79,range:(522,360,122,343,0,0,0,0),ancid:(0,1,2,3,-1,-1,-1,-1)
+// Parse sensor payload: "T:25.3,H:45.2,P:1013.2,G:52.1,E:0"
+bool parseSensorPayload(String payload, int tagId) {
+    if (tagId < 0 || tagId >= 8) return false;
     
+    float temp = 0, hum = 0, pres = 0, gas = 0;
+    bool panic = false;
+    bool gotT = false, gotH = false, gotP = false, gotG = false;
+    
+    int idx = 0;
+    while (idx < payload.length()) {
+        char key = payload.charAt(idx);
+        if (idx + 1 < payload.length() && payload.charAt(idx + 1) == ':') {
+            int valStart = idx + 2;
+            int valEnd = payload.indexOf(',', valStart);
+            if (valEnd < 0) valEnd = payload.length();
+            
+            String valStr = payload.substring(valStart, valEnd);
+            
+            switch (key) {
+                case 'T': temp = valStr.toFloat(); gotT = true; break;
+                case 'H': hum = valStr.toFloat(); gotH = true; break;
+                case 'P': pres = valStr.toFloat(); gotP = true; break;
+                case 'G': gas = valStr.toFloat(); gotG = true; break;
+                case 'E': panic = (valStr.toInt() == 1); break;
+            }
+            
+            idx = valEnd + 1;
+        } else {
+            idx++;
+        }
+    }
+    
+    if (gotT && gotH && gotP && gotG) {
+        tagSensors[tagId].temperature = temp;
+        tagSensors[tagId].humidity = hum;
+        tagSensors[tagId].pressure = pres;
+        tagSensors[tagId].gas = gas;
+        tagSensors[tagId].panic = panic;
+        tagSensors[tagId].valid = true;
+        tagSensors[tagId].lastUpdate = millis();
+        
+        SERIAL_LOG.print("[SENSOR] Tag ");
+        SERIAL_LOG.print(tagId);
+        SERIAL_LOG.print(" -> T:");
+        SERIAL_LOG.print(temp, 1);
+        SERIAL_LOG.print(" H:");
+        SERIAL_LOG.print(hum, 1);
+        SERIAL_LOG.print(" P:");
+        SERIAL_LOG.print(pres, 1);
+        SERIAL_LOG.print(" G:");
+        SERIAL_LOG.print(gas, 1);
+        SERIAL_LOG.print(" PANIC:");
+        SERIAL_LOG.println(panic ? "YES" : "no");
+        return true;
+    }
+    
+    SERIAL_LOG.print("[SENSOR] Parse failed: ");
+    SERIAL_LOG.println(payload);
+    return false;
+}
+
+// Parse AT+RDATA line
+// Format: AT+RDATA=Tag,0,1799048,35,T:25.3,H:45.2,P:1013.2,G:52.1,E:0
+void parseRDATA(String data) {
+    if (!data.startsWith("AT+RDATA=")) return;
+    
+    String params = data.substring(9);
+    
+    int commaPos[4];
+    int found = 0;
+    for (int i = 0; i < params.length() && found < 4; i++) {
+        if (params.charAt(i) == ',') {
+            commaPos[found] = i;
+            found++;
+        }
+    }
+    
+    if (found < 4) {
+        SERIAL_LOG.print("[RDATA] Not enough fields: ");
+        SERIAL_LOG.println(data);
+        return;
+    }
+    
+    int tagId = params.substring(commaPos[0] + 1, commaPos[1]).toInt();
+    String payload = params.substring(commaPos[3] + 1);
+    
+    SERIAL_LOG.print("[RDATA] Tag ");
+    SERIAL_LOG.print(tagId);
+    SERIAL_LOG.print(" data: ");
+    SERIAL_LOG.println(payload);
+    
+    parseSensorPayload(payload, tagId);
+}
+
+void parseAndPublish(String data) {
     if (!data.startsWith("AT+RANGE=")) return;
     
-    // Extract tag ID (tid:X)
     int tidIdx = data.indexOf("tid:");
     if (tidIdx < 0) return;
     int tidEnd = data.indexOf(",", tidIdx);
     int tagId = data.substring(tidIdx + 4, tidEnd).toInt();
     
-    // Extract range array - range:(522,360,122,343,0,0,0,0)
     int rangeIdx = data.indexOf("range:(");
     if (rangeIdx < 0) return;
     int rangeStart = rangeIdx + 7;
     int rangeEnd = data.indexOf(")", rangeStart);
     String rangeStr = data.substring(rangeStart, rangeEnd);
     
-    // Extract ancid array - ancid:(0,1,2,3,-1,-1,-1,-1)
     int ancidIdx = data.indexOf("ancid:(");
     if (ancidIdx < 0) return;
     int ancidStart = ancidIdx + 7;
     int ancidEnd = data.indexOf(")", ancidStart);
     String ancidStr = data.substring(ancidStart, ancidEnd);
     
-    // Parse arrays and find this anchor's distance
     int rangeValues[8] = {0};
     int ancidValues[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
     
-    // Parse range values
     int idx = 0;
     int startPos = 0;
     for (int i = 0; i <= rangeStr.length() && idx < 8; i++) {
@@ -249,7 +357,6 @@ void parseAndPublish(String data) {
         }
     }
     
-    // Parse ancid values
     idx = 0;
     startPos = 0;
     for (int i = 0; i <= ancidStr.length() && idx < 8; i++) {
@@ -260,7 +367,6 @@ void parseAndPublish(String data) {
         }
     }
     
-    // Find this anchor's distance
     int distanceCm = -1;
     for (int i = 0; i < 8; i++) {
         if (ancidValues[i] == ANCHOR_ID) {
@@ -269,12 +375,10 @@ void parseAndPublish(String data) {
         }
     }
     
-    // Only publish if we found a valid distance for this anchor
     if (distanceCm > 0) {
         float distanceM = distanceCm / 100.0;
         publishDistance(tagId, distanceM, 0);
         
-        // Update display
         String displayData = "T";
         displayData += tagId;
         displayData += ": ";
@@ -332,8 +436,15 @@ void setup() {
     delay(2000);
     
     SERIAL_LOG.println(F("\n\n================================================"));
-    SERIAL_LOG.println(F("  VERTEX UWB - Anchor with WiFi + MQTT"));
+    SERIAL_LOG.println(F("  VERTEX UWB - Anchor + MQTT + Piggyback"));
     SERIAL_LOG.println(F("================================================\n"));
+    
+    // Initialize sensor data cache
+    for (int i = 0; i < 8; i++) {
+        tagSensors[i].valid = false;
+        tagSensors[i].panic = false;
+        tagSensors[i].lastUpdate = 0;
+    }
     
     SERIAL_AT.begin(115200, SERIAL_8N1, IO_RXD2, IO_TXD2);
     SERIAL_AT.println("AT");
@@ -364,7 +475,7 @@ void setup() {
     setupMQTT();
     
     SERIAL_LOG.println(F("\n================================================"));
-    SERIAL_LOG.println(F("  Anchor Ready - Publishing to MQTT"));
+    SERIAL_LOG.println(F("  Anchor Ready - MQTT + Piggyback + Panic"));
     SERIAL_LOG.println(F("================================================\n"));
     
     updateDisplay("Ready", "Waiting for tags...");
@@ -407,7 +518,11 @@ void loop() {
                 SERIAL_LOG.print("[UWB] ");
                 SERIAL_LOG.println(response);
                 
-                parseAndPublish(response);
+                if (response.startsWith("AT+RANGE")) {
+                    parseAndPublish(response);
+                } else if (response.startsWith("AT+RDATA")) {
+                    parseRDATA(response);
+                }
             }
             response = "";
         } else {

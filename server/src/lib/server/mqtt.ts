@@ -10,7 +10,13 @@ let client: mqtt.MqttClient | null = null;
 export function connectMQTT() {
     if (client) return client;
 
-    client = mqtt.connect('mqtt://172.20.10.2:1883'); //changed localhost to IP (Mari)
+    // Use environment variable or default to home WiFi IP
+    const brokerIp = process.env.VITE_MQTT_BROKER_IP || 'localhost';
+    const brokerPort = process.env.VITE_MQTT_PORT || '1883';
+    const brokerUrl = `mqtt://${brokerIp}:${brokerPort}`;
+
+    console.log(`🔌 Connecting to MQTT broker at ${brokerUrl}`);
+    client = mqtt.connect(brokerUrl);
 
     client.on('connect', () => {
         console.log('✅ Connected to MQTT broker');
@@ -37,7 +43,8 @@ export function connectMQTT() {
             messages.pop();
         }
 
-        // Process UWB data
+        // Process UWB data from anchors
+        // Anchors now publish both distance AND gas data (piggyback)
         if (topic.startsWith('uwb/')) {
             try {
                 const data = JSON.parse(payloadStr);

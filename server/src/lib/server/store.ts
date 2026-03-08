@@ -1,6 +1,3 @@
-import workersConfig from '$lib/config/workers.json';
-import anchorsConfig from '$lib/config/anchors.json';
-
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
@@ -35,8 +32,14 @@ export interface WorkerPosition {
     empId: string;
     x: number;
     y: number;
-    gas: number;
-    status: 'ok' | 'warning' | 'alert';
+    gasResistance: number;
+    iaq: number;
+    iaqLabel: string;
+    temperature: number | null;
+    humidity: number | null;
+    pressure: number | null;
+    panic: boolean;
+    status: 'ok' | 'warning' | 'alert' | 'panic';
     lastSeen: string;
 }
 
@@ -49,33 +52,81 @@ export interface RangeReading {
 // Store
 export let workers: Worker[] = loadWorkers();
 
-// Reload workers periodically (every 5 seconds)
 setInterval(() => {
     workers = loadWorkers();
-    // Remove positions for workers that no longer exist
     for (const tagId of workerPositions.keys()) {
         if (!workers.find(w => w.tagId === tagId)) {
             workerPositions.delete(tagId);
         }
     }
 }, 5000);
+
+import anchorsConfig from '$lib/config/anchors.json';
+
 export const anchors: Anchor[] = anchorsConfig.map(a => ({
     ...a,
     online: false,
     lastSeen: null
 }));
 
-// Track latest range readings per tag (need 3+ anchors for trilateration)
-const tagReadings: Map<number, Map<string, RangeReading>> = new Map();
+export interface AlertRecord {
+    tagId: number;
+    fullName: string;
+    empId: string;
+    type: 'gas' | 'panic';
+    gasResistance: number;
+    iaq: number;
+    timestamp: string;
+}
 
-// Track calculated positions
+export const alertHistory: AlertRecord[] = [];
+
+const tagReadings: Map<number, Map<string, RangeReading>> = new Map();
 export const workerPositions: Map<number, WorkerPosition> = new Map();
 
-// Trilateration: calculate position from 3+ anchor distances
+// IAQ Calculation
+function gasResistanceToIAQ(gasResistance: number): { iaq: number; label: string } {
+    let iaq: number;
+
+    if (gasResistance >= 300) {
+        iaq = Math.max(0, 25 - ((gasResistance - 300) / 200) * 25);
+    } else if (gasResistance >= 150) {
+        iaq = 25 + ((300 - gasResistance) / 150) * 50;
+    } else if (gasResistance >= 75) {
+        iaq = 75 + ((150 - gasResistance) / 75) * 75;
+    } else if (gasResistance >= 30) {
+        iaq = 150 + ((75 - gasResistance) / 45) * 100;
+    } else if (gasResistance >= 10) {
+        iaq = 250 + ((30 - gasResistance) / 20) * 100;
+    } else {
+        iaq = 350 + ((10 - gasResistance) / 10) * 150;
+    }
+
+    iaq = Math.round(Math.max(0, Math.min(500, iaq)));
+
+    let label: string;
+    if (iaq <= 50) label = 'Excellent';
+    else if (iaq <= 100) label = 'Good';
+    else if (iaq <= 150) label = 'Moderate';
+    else if (iaq <= 200) label = 'Poor';
+    else if (iaq <= 300) label = 'Unhealthy';
+    else label = 'Hazardous';
+
+    return { iaq, label };
+}
+
+// Panic overrides gas status
+function getStatus(iaq: number, panic: boolean): 'ok' | 'warning' | 'alert' | 'panic' {
+    if (panic) return 'panic';
+    if (iaq >= 200) return 'alert';
+    if (iaq >= 150) return 'warning';
+    return 'ok';
+}
+
+// Trilateration
 function trilaterate(readings: Map<string, RangeReading>): { x: number; y: number } | null {
     if (readings.size < 3) return null;
 
-    // Get anchor positions and distances
     const points: { x: number; y: number; d: number }[] = [];
     
     readings.forEach((reading, anchorId) => {
@@ -87,7 +138,6 @@ function trilaterate(readings: Map<string, RangeReading>): { x: number; y: numbe
 
     if (points.length < 3) return null;
 
-    // Simple trilateration using first 3 points
     const [p1, p2, p3] = points;
 
     const A = 2 * (p2.x - p1.x);
@@ -103,56 +153,93 @@ function trilaterate(readings: Map<string, RangeReading>): { x: number; y: numbe
     const x = (C * E - F * B) / denominator;
     const y = (A * F - D * C) / denominator;
 
-    // Clamp to valid range (0-10m)
     return {
         x: Math.max(0, Math.min(7.5, x)),
         y: Math.max(0, Math.min(7.5, y))
     };
 }
 
-// Determine status based on gas level
-function getStatus(gas: number): 'ok' | 'warning' | 'alert' {
-    if (gas >= 80) return 'alert';
-    if (gas >= 50) return 'warning';
-    return 'ok';
-}
-
-// Process incoming MQTT data
-// Process incoming MQTT data
+// Process incoming MQTT data from anchors
 export function processReading(data: {
     tagId: number;
-    fullName: string;
-    empId: string;
     distance: number;
-    gas: number;
     anchorId: string;
     timestamp: string;
+    temperature?: number;
+    humidity?: number;
+    pressure?: number;
+    gas?: number;
+    panic?: boolean;
 }) {
-    const { tagId, distance, gas, anchorId, timestamp } = data;
+    const { tagId, distance, anchorId, timestamp } = data;
 
-    // Check if this worker is registered
     const registeredWorker = workers.find(w => w.tagId === tagId);
-    if (!registeredWorker) {
-        // Ignore data from unregistered tags
-        return;
-    }
+    if (!registeredWorker) return;
 
-    // Update anchor status
-   const anchor = anchors.find(a => a.anchorId === String(anchorId));
+    const anchor = anchors.find(a => a.anchorId === String(anchorId));
     if (anchor) {
         anchor.online = true;
         anchor.lastSeen = timestamp;
     }
 
-    // Store range reading
     if (!tagReadings.has(tagId)) {
         tagReadings.set(tagId, new Map());
     }
     tagReadings.get(tagId)!.set(anchorId, { anchorId, distance, timestamp });
 
-    // Try to calculate position
     const readings = tagReadings.get(tagId)!;
     const position = trilaterate(readings);
+
+    const existing = workerPositions.get(tagId);
+
+    let gasResistance = existing?.gasResistance ?? 0;
+    let iaq = existing?.iaq ?? 0;
+    let iaqLabel = existing?.iaqLabel ?? 'Unknown';
+    let temperature = existing?.temperature ?? null;
+    let humidity = existing?.humidity ?? null;
+    let pressure = existing?.pressure ?? null;
+    let panic = existing?.panic ?? false;
+
+    if (data.gas !== undefined) {
+        gasResistance = data.gas;
+        const iaqResult = gasResistanceToIAQ(gasResistance);
+        iaq = iaqResult.iaq;
+        iaqLabel = iaqResult.label;
+    }
+    if (data.temperature !== undefined) temperature = data.temperature;
+    if (data.humidity !== undefined) humidity = data.humidity;
+    if (data.pressure !== undefined) pressure = data.pressure;
+    if (data.panic !== undefined) panic = data.panic;
+
+    const status = getStatus(iaq, panic);
+
+    // Log alert for gas hazard
+    if (status === 'alert' && data.gas !== undefined) {
+        alertHistory.unshift({
+            tagId,
+            fullName: registeredWorker.fullName,
+            empId: registeredWorker.empId,
+            type: 'gas',
+            gasResistance,
+            iaq,
+            timestamp: new Date().toISOString()
+        });
+        if (alertHistory.length > 200) alertHistory.pop();
+    }
+
+    // Log alert for panic activation
+    if (data.panic === true && !existing?.panic) {
+        alertHistory.unshift({
+            tagId,
+            fullName: registeredWorker.fullName,
+            empId: registeredWorker.empId,
+            type: 'panic',
+            gasResistance,
+            iaq,
+            timestamp: new Date().toISOString()
+        });
+        if (alertHistory.length > 200) alertHistory.pop();
+    }
 
     if (position) {
         workerPositions.set(tagId, {
@@ -161,19 +248,40 @@ export function processReading(data: {
             empId: registeredWorker.empId,
             x: parseFloat(position.x.toFixed(2)),
             y: parseFloat(position.y.toFixed(2)),
-            gas,
-            status: getStatus(gas),
+            gasResistance,
+            iaq,
+            iaqLabel,
+            temperature,
+            humidity,
+            pressure,
+            panic,
+            status,
+            lastSeen: timestamp
+        });
+    } else if (existing) {
+        workerPositions.set(tagId, {
+            ...existing,
+            gasResistance,
+            iaq,
+            iaqLabel,
+            temperature,
+            humidity,
+            pressure,
+            panic,
+            status,
             lastSeen: timestamp
         });
     }
 }
 
-// Get all current worker positions
 export function getWorkerPositions(): WorkerPosition[] {
     return Array.from(workerPositions.values());
 }
 
-// Get all anchors with status
 export function getAnchors(): Anchor[] {
     return anchors;
+}
+
+export function getAlertHistory(): AlertRecord[] {
+    return alertHistory;
 }
