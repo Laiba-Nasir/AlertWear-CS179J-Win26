@@ -84,6 +84,32 @@ export const alertHistory: AlertRecord[] = [];
 const tagReadings: Map<number, Map<string, RangeReading>> = new Map();
 export const workerPositions: Map<number, WorkerPosition> = new Map();
 
+// Staleness timeout: mark anchors offline and remove workers after 15 seconds of no data
+const STALE_TIMEOUT_MS = 15_000;
+
+setInterval(() => {
+    const now = Date.now();
+
+    // Mark anchors offline if no data received recently
+    for (const anchor of anchors) {
+        if (anchor.online && anchor.lastSeen) {
+            const age = now - new Date(anchor.lastSeen).getTime();
+            if (age > STALE_TIMEOUT_MS) {
+                anchor.online = false;
+            }
+        }
+    }
+
+    // Remove stale worker positions
+    for (const [tagId, pos] of workerPositions) {
+        const age = now - new Date(pos.lastSeen).getTime();
+        if (age > STALE_TIMEOUT_MS) {
+            workerPositions.delete(tagId);
+            tagReadings.delete(tagId);
+        }
+    }
+}, 3000);
+
 // IAQ Calculation
 function gasResistanceToIAQ(gasResistance: number): { iaq: number; label: string } {
     let iaq: number;
@@ -154,8 +180,8 @@ function trilaterate(readings: Map<string, RangeReading>): { x: number; y: numbe
     const y = (A * F - D * C) / denominator;
 
     return {
-        x: Math.max(0, Math.min(7.5, x)),
-        y: Math.max(0, Math.min(7.5, y))
+        x: Math.max(0, Math.min(10, x)),
+        y: Math.max(0, Math.min(20, y))
     };
 }
 
@@ -171,7 +197,8 @@ export function processReading(data: {
     gas?: number;
     panic?: boolean;
 }) {
-    const { tagId, distance, anchorId, timestamp } = data;
+    const { tagId, distance, anchorId } = data;
+    const now = new Date().toISOString();
 
     const registeredWorker = workers.find(w => w.tagId === tagId);
     if (!registeredWorker) return;
@@ -179,13 +206,13 @@ export function processReading(data: {
     const anchor = anchors.find(a => a.anchorId === String(anchorId));
     if (anchor) {
         anchor.online = true;
-        anchor.lastSeen = timestamp;
+        anchor.lastSeen = now;
     }
 
     if (!tagReadings.has(tagId)) {
         tagReadings.set(tagId, new Map());
     }
-    tagReadings.get(tagId)!.set(anchorId, { anchorId, distance, timestamp });
+    tagReadings.get(tagId)!.set(anchorId, { anchorId, distance, timestamp: now });
 
     const readings = tagReadings.get(tagId)!;
     const position = trilaterate(readings);
@@ -256,7 +283,7 @@ export function processReading(data: {
             pressure,
             panic,
             status,
-            lastSeen: timestamp
+            lastSeen: now
         });
     } else if (existing) {
         workerPositions.set(tagId, {
@@ -269,13 +296,41 @@ export function processReading(data: {
             pressure,
             panic,
             status,
-            lastSeen: timestamp
+            lastSeen: now
+        });
+    } else {
+        // Show worker immediately even before trilateration succeeds
+        // Use nearest anchor position as approximate location
+        const nearestAnchor = anchors.find(a => a.anchorId === String(anchorId));
+        workerPositions.set(tagId, {
+            tagId,
+            fullName: registeredWorker.fullName,
+            empId: registeredWorker.empId,
+            x: nearestAnchor ? nearestAnchor.x : 0,
+            y: nearestAnchor ? nearestAnchor.y : 0,
+            gasResistance,
+            iaq,
+            iaqLabel,
+            temperature,
+            humidity,
+            pressure,
+            panic,
+            status,
+            lastSeen: now
         });
     }
 }
 
 export function getWorkerPositions(): WorkerPosition[] {
     return Array.from(workerPositions.values());
+}
+
+export function markAnchorOnline(anchorId: string) {
+    const anchor = anchors.find(a => a.anchorId === String(anchorId));
+    if (anchor) {
+        anchor.online = true;
+        anchor.lastSeen = new Date().toISOString();
+    }
 }
 
 export function getAnchors(): Anchor[] {

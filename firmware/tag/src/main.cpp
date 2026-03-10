@@ -424,6 +424,17 @@ void setup() {
     }
     display.clearDisplay();
     logoshow();
+
+    // I2C scan
+    SERIAL_LOG.println("Scanning I2C on IO6/IO7...");
+    I2C_BME.begin(6, 7);
+    for (byte addr = 1; addr < 127; addr++) {
+        I2C_BME.beginTransmission(addr);
+        if (I2C_BME.endTransmission() == 0) {
+            SERIAL_LOG.print("Found: 0x");
+            SERIAL_LOG.println(addr, HEX);
+        }
+    }
     
     setupBME680();
     

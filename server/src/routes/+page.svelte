@@ -249,7 +249,7 @@
     }
 
     .dashboard {
-        min-height: calc(100vh - 60px);
+        min-height: 100vh;
         background: var(--bg-primary);
     }
 
@@ -301,7 +301,7 @@
         border-radius: 12px;
         padding: 20px;
         box-shadow: var(--shadow);
-        max-height: calc(100vh - 180px);
+        max-height: calc(100vh - 120px);
         overflow-y: auto;
     }
 

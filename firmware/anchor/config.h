@@ -2,9 +2,9 @@
 #define CONFIG_H
 
 // ===== CHANGE THESE WHEN SWITCHING HOTSPOT =====
-#define WIFI_SSID       "SpectrumSetup-7D"
-#define WIFI_PASSWORD   "saltmoment407"
-#define MQTT_SERVER     "172.20.10.7"
+#define WIFI_SSID       "Abby"
+#define WIFI_PASSWORD   "#pAndA2011"
+#define MQTT_SERVER     "172.20.10.4"
 #define MQTT_PORT       1883
 // ================================================
 

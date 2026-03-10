@@ -502,6 +502,16 @@ void loop() {
     if (mqttConnected) {
         mqttClient.loop();
     }
+
+    // In loop(), after mqttClient.loop():
+    static unsigned long lastHeartbeat = 0;
+    if (mqttConnected && millis() - lastHeartbeat > 10000) {
+        lastHeartbeat = millis();
+        String topic = "uwb/anchor/";
+        topic += ANCHOR_ID;
+        topic += "/status";
+        mqttClient.publish(topic.c_str(), "online");
+    }
     
     while (SERIAL_LOG.available() > 0) {
         SERIAL_AT.write(SERIAL_LOG.read());

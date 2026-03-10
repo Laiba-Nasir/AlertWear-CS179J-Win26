@@ -1,5 +1,5 @@
 import mqtt from 'mqtt';
-import { processReading } from './store';
+import { processReading, markAnchorOnline } from './store';
 
 // Store for debug messages
 export const messages: { timestamp: string; topic: string; payload: string }[] = [];
@@ -43,14 +43,21 @@ export function connectMQTT() {
             messages.pop();
         }
 
-        // Process UWB data from anchors
-        // Anchors now publish both distance AND gas data (piggyback)
+        // Handle anchor status heartbeats (e.g. uwb/anchor/2/status → "online")
+        const statusMatch = topic.match(/^uwb\/anchor\/(\d+)\/status$/);
+        if (statusMatch) {
+            markAnchorOnline(statusMatch[1]);
+            return;
+        }
+
+        // Process UWB data from anchors (JSON with distance + gas data)
         if (topic.startsWith('uwb/')) {
             try {
                 const data = JSON.parse(payloadStr);
+                console.log(`📡 Range data: anchor=${data.anchorId} tag=${data.tagId} dist=${data.distance}m`);
                 processReading(data);
             } catch (e) {
-                console.error('Failed to parse MQTT message:', e);
+                // Skip non-JSON messages silently
             }
         }
     });

@@ -17,24 +17,19 @@
 
 // ============== USER CONFIG - EDIT THESE! ==============
 // WiFi Settings
-const char* WIFI_SSID = "SpectrumSetup-7D";
-const char* WIFI_PASSWORD = "saltmoment407";
-
-// const char* WIFI_SSID = "Ericks iphone x";
-// const char* WIFI_PASSWORD = "erick818";
-// const char* MQTT_SERVER = "192.0.0.2";
-// const int MQTT_PORT = 1883;
+const char* WIFI_SSID = "Abby";
+const char* WIFI_PASSWORD = "#pAndA2011";
 
 // MQTT Settings (your VERTEX server)
-const char* MQTT_SERVER = "192.168.1.148";
+const char* MQTT_SERVER = "172.20.10.4";
 const int MQTT_PORT = 1883;
 const char* MQTT_USER = "";
 const char* MQTT_PASSWORD = "";
 
 // Anchor Configuration
-#define ANCHOR_ID 0
-#define ANCHOR_X 0.0
-#define ANCHOR_Y 0.0
+#define ANCHOR_ID 3
+#define ANCHOR_X 0
+#define ANCHOR_Y 20
 
 // UWB Settings
 #define UWB_TAG_COUNT 64

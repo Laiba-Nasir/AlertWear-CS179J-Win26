@@ -8,19 +8,19 @@
     {
         "anchorId": "1",
         "name": "Anchor 1",
-        "x": 7.5,
+        "x": 10,
         "y": 0
     },
     {
         "anchorId": "2",
         "name": "Anchor 2",
-        "x": 7.5,
-        "y": 7.5
+        "x": 10,
+        "y": 20
     },
     {
         "anchorId": "3",
         "name": "Anchor 3",
         "x": 0,
-        "y": 7.5
+        "y": 20
     }
 ]
