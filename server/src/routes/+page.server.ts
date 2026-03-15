@@ -1,8 +1,9 @@
-import { getWorkerPositions, getAnchors } from '$lib/server/store';
+import { getWorkerPositions, getAnchors, getAlertHistory } from '$lib/server/store';
 
 export function load() {
     return {
         workers: getWorkerPositions(),
-        anchors: getAnchors()
+        anchors: getAnchors(),
+        alerts: getAlertHistory()
     };
 }

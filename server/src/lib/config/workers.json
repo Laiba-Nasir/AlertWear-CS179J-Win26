@@ -1,5 +1,10 @@
 [
     {
+        "tagId": 0,
+        "fullName": "Test Worker",
+        "empId": "EMP-000"
+    },
+    {
         "tagId": 3,
         "fullName": "Bob Wilson",
         "empId": "EMP-003"

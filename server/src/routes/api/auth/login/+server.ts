@@ -2,7 +2,7 @@ import { json } from '@sveltejs/kit';
 
 // Simple hardcoded credentials (in production, use a database)
 const ADMIN_USERNAME = 'admin';
-const ADMIN_PASSWORD = 'admin123';
+const ADMIN_PASSWORD = 'Vertex@2026!';
 
 export async function POST({ request, cookies }) {
     const { username, password } = await request.json();

@@ -1,26 +1,26 @@
 [
     {
-        "anchorId": "A1",
-        "name": "North Corner",
+        "anchorId": "0",
+        "name": "Anchor 0",
         "x": 0,
         "y": 0
     },
     {
-        "anchorId": "A2",
-        "name": "East Corner",
+        "anchorId": "1",
+        "name": "Anchor 1",
         "x": 10,
         "y": 0
     },
     {
-        "anchorId": "A3",
-        "name": "South Corner",
+        "anchorId": "2",
+        "name": "Anchor 2",
         "x": 10,
-        "y": 10
+        "y": 20
     },
     {
-        "anchorId": "A4",
-        "name": "West Corner",
+        "anchorId": "3",
+        "name": "Anchor 3",
         "x": 0,
-        "y": 10
+        "y": 20
     }
 ]
